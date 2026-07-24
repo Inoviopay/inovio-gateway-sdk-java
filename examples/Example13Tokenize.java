@@ -16,7 +16,7 @@ import java.util.List;
  * gateway password. Without it the service answers error 121.
  *
  * <p>⚠️ This is a SERVER-SIDE call — the PAN passes through your
- * infrastructure, so you stay in PCI scope. The low-scope path is Hosted Fields.
+ * server. The browser Hosted Fields client keeps it in the cardholder's browser.
  */
 public class Example13Tokenize {
     public static void main(String[] a) {

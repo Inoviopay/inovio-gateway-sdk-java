@@ -323,7 +323,7 @@ public final class InovioClient {
      * token service answers error 121.
      *
      * <p>NOTE: this is a server-side call — the PAN passes through your
-     * infrastructure, so you remain in PCI scope. The low-scope path is the
+     * infrastructure, so you remain in your server's data flow. The low-scope path is the
      * browser Hosted Fields client.
      */
     public Tokenize.Result tokenize(Card card) {

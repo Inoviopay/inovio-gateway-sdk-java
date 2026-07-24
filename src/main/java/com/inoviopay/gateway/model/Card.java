@@ -3,7 +3,7 @@ package com.inoviopay.gateway.model;
 import java.util.Objects;
 import java.util.regex.Pattern;
 
-/** Raw PAN entry — puts the caller in PCI scope. Prefer {@link Token}. */
+/** Raw card-number entry — the number passes through your server. Prefer {@link Token}. */
 public final class Card implements PaymentMethod {
 
     private static final Pattern PAN = Pattern.compile("\\d{12,19}");
