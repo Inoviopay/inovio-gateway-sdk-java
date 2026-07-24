@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Generate Java enum/lookup sources from ../spec/spec-enums.json (decision D1)."""
+"""Generate Java enum/lookup sources from this repo's spec/spec-enums.json (decision D1)."""
 import json
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SPEC = HERE.parent.parent / "spec" / "spec-enums.json"
+SPEC = HERE.parent / "spec" / "spec-enums.json"
 PKG = HERE.parent / "src/main/java/com/inoviopay/gateway/enums"
 spec = json.loads(SPEC.read_text())
 A, ver = spec["appendices"], spec["apiVersion"]
 PKG.mkdir(parents=True, exist_ok=True)
 
 HEADER = f"""// GENERATED FILE — DO NOT EDIT.
-// Source: Inovio Gateway Payments Service API v{ver} (api-sdk/spec/spec-enums.json)
+// Source: Inovio Gateway Payments Service API v{ver} (spec/spec-enums.json)
 // Regenerate: python3 scripts/generate_enums.py
 //
 // Classifiers (retryable/terminal/stopRecurring, AVS/CVV classification and the
 // API-code -> exception mapping) are DERIVED by the SDK project, not stated in
-// the spec. See api-sdk/spec/README.md.
+// the spec. See spec/README.md.
 package com.inoviopay.gateway.enums;
 """
 
