@@ -61,7 +61,12 @@ public final class RequestBuilder {
             put(p, "PMT_EXPIRY", c.expiry());
             put(p, "PMT_KEY", c.cvv());
         } else if (req.paymentMethod instanceof Token) {
-            put(p, "TOKEN_GUID", ((Token) req.paymentMethod).guid());
+            // The token stands in for the PAN only — the transaction service
+            // still requires the expiry (and CVV where the processor asks).
+            Token t = (Token) req.paymentMethod;
+            put(p, "TOKEN_GUID", t.guid());
+            put(p, "PMT_EXPIRY", t.expiry());
+            put(p, "PMT_KEY", t.cvv());
         } else if (req.paymentMethod instanceof SavedCard) {
             SavedCard s = (SavedCard) req.paymentMethod;
             put(p, "PMT_ID", s.pmtId());

@@ -80,6 +80,11 @@ public final class InovioClient {
         public String apiVersion = SpecVersion.API_VERSION;
         public long timeoutMs = DEFAULT_TIMEOUT_MS;
         public HttpClient httpClient;
+        /**
+         * Per-site HMAC secret for the token service (spec §4.8). Issued by
+         * Inovio support; distinct from the gateway password. tokenize() only.
+         */
+        public String siteKey;
     }
 
     private final Credentials creds;
@@ -88,6 +93,7 @@ public final class InovioClient {
     private final String apiVersion;
     private final long timeoutMs;
     private final HttpClient http;
+    private final String siteKey;
 
     public InovioClient(Credentials creds) {
         this(creds, new Options());
@@ -103,6 +109,7 @@ public final class InovioClient {
         this.apiVersion = o.apiVersion;
         this.timeoutMs = o.timeoutMs;
         this.http = o.httpClient != null ? o.httpClient : new JdkHttpClient();
+        this.siteKey = o.siteKey;
     }
 
     // ------------------------------------------------------------------
@@ -285,28 +292,29 @@ public final class InovioClient {
     }
 
     /**
-     * Ephemeral tokenization (spec §4.8) — exchanges a PAN for a single-use
-     * {@code TOKEN_GUID}.
+     * Ephemeral tokenization (spec §4.8) — exchange a PAN for a single-use
+     * {@code TOKEN_GUID} usable in place of {@code PMT_NUMB}.
      *
-     * <p>NOTE: this server-side call still touches the PAN and therefore keeps
-     * the caller in PCI scope. The lower-scope path is the browser Hosted Fields
-     * client, which tokenizes without the PAN reaching your server.
+     * <p>Requires {@code siteKey} on {@link Options} — the per-site HMAC secret
+     * issued by Inovio support. It is NOT the gateway password; without it the
+     * token service answers error 121.
+     *
+     * <p>NOTE: this is a server-side call — the PAN passes through your
+     * infrastructure, so you remain in PCI scope. The low-scope path is the
+     * browser Hosted Fields client.
      */
-    public Token tokenize(Card card) {
-        Map<String, String> p = authParams("TOKENIZE");
-        p.put("PMT_NUMB", card.number());
-        p.put("PMT_EXPIRY", card.expiry());
-        if (card.cvv() != null) p.put("PMT_KEY", card.cvv());
-        Map<String, String> raw = Transport.send(tokenEndpoint, http, timeoutMs, p, null);
-        raiseIfApiError(raw);
-        String guid = raw.get("TOKEN_GUID");
-        if (guid == null) guid = raw.get("TOKEN");
-        if (guid == null) guid = raw.get("TOKEN_ID");
-        if (guid == null) {
-            throw new ConfigurationException(
-                "token service did not return a TOKEN_GUID", null, raw);
+    public Tokenize.Result tokenize(Card card) {
+        return tokenize(card, null);
+    }
+
+    public Tokenize.Result tokenize(Card card, String uniqueId) {
+        if (siteKey == null || siteKey.isEmpty()) {
+            throw new ValidationException(
+                "tokenize requires Options.siteKey — the per-site HMAC secret from "
+                    + "Inovio support (not your gateway password).");
         }
-        return PaymentMethods.token(guid);
+        return Tokenize.tokenize(card, tokenEndpoint, http, timeoutMs,
+            creds.siteId, siteKey, apiVersion, uniqueId);
     }
 
     /** TESTAUTH — verify credentials. */

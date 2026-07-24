@@ -23,6 +23,11 @@ public final class PaymentMethods {
         return new Token(guid);
     }
 
+    /** @param expiry MMYYYY — required when the token is used to transact. */
+    public static Token token(String guid, String expiry, String cvv) {
+        return new Token(guid, expiry, cvv);
+    }
+
     public static SavedCard savedCardByPmtId(String pmtId) {
         return new SavedCard(pmtId, null, null);
     }

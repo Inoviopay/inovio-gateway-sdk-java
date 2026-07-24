@@ -203,11 +203,20 @@ public final class Transport {
     public static Map<String, String> send(
         String endpoint, HttpClient client, long timeoutMs,
         Map<String, String> params, String idempotencyKey) {
+        return send(endpoint, client, timeoutMs, params, idempotencyKey, null);
+    }
+
+    /** {@code extraHeaders} carries X-SIGNATURE/X-TIMESTAMP for the token service. */
+    public static Map<String, String> send(
+        String endpoint, HttpClient client, long timeoutMs,
+        Map<String, String> params, String idempotencyKey,
+        Map<String, String> extraHeaders) {
 
         String body = formEncode(params);
         Map<String, String> headers = new HashMap<>();
         headers.put("Content-Type", "application/x-www-form-urlencoded");
         headers.put("Accept", "application/json");
+        if (extraHeaders != null) headers.putAll(extraHeaders);
 
         HttpClient.Response res;
         try {
