@@ -375,6 +375,35 @@ class ConformanceTest {
         assertNotEquals(TransactionStatus.APPROVED, client(http).sale(req()).status());
     }
 
+    // ------------------------------ empty-string fields (live-gateway bug)
+
+    @Test
+    void emptyStringFields_treatedAsAbsent() {
+        // The gateway returns inapplicable fields as EMPTY STRINGS rather than
+        // omitting them — verified against the live T1 gateway on TESTGW and
+        // TESTAUTH. A plain null check treats those as present and hands "" to
+        // a reference constructor, which throws. The mocked fixtures never
+        // caught it because they omit the keys entirely.
+        MockHttp http = new MockHttp(resp(
+            "REQUEST_ACTION", "CCAUTHCAP", "TRANS_STATUS_NAME", "APPROVED",
+            "TRANS_VALUE", "1.00", "CURR_CODE_ALPHA", "USD", "PO_ID", "PO-EMPTY",
+            "TRANS_ID", "", "CUST_ID", "", "XTL_CUST_ID", "", "PMT_ID", "",
+            "BATCH_ID", "", "MERCH_ACCT_ID", "", "CARD_BRAND_NAME", "",
+            "PMT_L4", "", "AVS_RESPONSE", "",
+            "API_RESPONSE", "0", "SERVICE_RESPONSE", "100"));
+
+        TransactionResult r = client(http).sale(req());   // must not throw
+
+        assertEquals(TransactionStatus.APPROVED, r.status());
+        assertEquals("PO-EMPTY", r.orderRef().poId());
+        assertNull(r.transactionId(), "empty TRANS_ID must map to null");
+        assertNull(r.customerRef(), "empty CUST_ID must map to null");
+        assertNull(r.savedCardRef(), "empty PMT_ID must map to null");
+        assertNull(r.batchId(), "empty BATCH_ID must map to null");
+        assertNull(r.card(), "all-empty card fields must map to null");
+        assertNull(r.avs(), "empty AVS_RESPONSE must map to null");
+    }
+
     // ------------------------------------------ generated enums / cross-language
 
     @Test

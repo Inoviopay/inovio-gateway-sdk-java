@@ -40,6 +40,21 @@ public final class ResultMapper {
         return "1".equals(v) || "Y".equalsIgnoreCase(v) || "TRUE".equalsIgnoreCase(v);
     }
 
+    /**
+     * A field counts as present only when it is non-null AND non-empty.
+     *
+     * The gateway returns inapplicable fields as EMPTY STRINGS rather than
+     * omitting them — a TESTGW response, for example, carries TRANS_ID="".
+     * A plain null check therefore treats them as present and hands "" to a
+     * reference constructor, which rejects it. Verified against the live T1
+     * gateway; the mocked fixtures never exercised it because they omit the
+     * keys entirely.
+     */
+    private static String val(Map<String, String> r, String key) {
+        String v = r.get(key);
+        return (v == null || v.isEmpty()) ? null : v;
+    }
+
     public static TransactionResult toTransactionResult(Map<String, String> r) {
         TransactionStatus status = TransactionStatus.fromWire(r.get("TRANS_STATUS_NAME"));
 
@@ -55,20 +70,20 @@ public final class ResultMapper {
         for (String k : liKeys) liRefs.add(Refs.lineItem(r.get(k)));
 
         Money amount = null;
-        if (r.get("TRANS_VALUE") != null && r.get("CURR_CODE_ALPHA") != null) {
-            amount = Money.of(r.get("TRANS_VALUE"), r.get("CURR_CODE_ALPHA"));
+        if (val(r, "TRANS_VALUE") != null && val(r, "CURR_CODE_ALPHA") != null) {
+            amount = Money.of(val(r, "TRANS_VALUE"), val(r, "CURR_CODE_ALPHA"));
         }
 
         // Conversion is reported ONLY on real FX — otherwise the "settled"
         // fields are just the auth amount echoed back and would mean nothing.
         TransactionResult.Conversion conversion = null;
-        String rate = r.get("TRANS_EXCH_RATE");
+        String rate = val(r, "TRANS_EXCH_RATE");
         if (rate != null && !rate.isEmpty()
             && new BigDecimal(rate).compareTo(BigDecimal.ZERO) != 0
-            && r.get("TRANS_VALUE_SETTLED") != null
-            && r.get("CURR_CODE_ALPHA_SETTLED") != null) {
+            && val(r, "TRANS_VALUE_SETTLED") != null
+            && val(r, "CURR_CODE_ALPHA_SETTLED") != null) {
             conversion = new TransactionResult.Conversion(
-                Money.of(r.get("TRANS_VALUE_SETTLED"), r.get("CURR_CODE_ALPHA_SETTLED")), rate);
+                Money.of(val(r, "TRANS_VALUE_SETTLED"), val(r, "CURR_CODE_ALPHA_SETTLED")), rate);
         }
 
         TransactionResult.Outcome outcome = new TransactionResult.Outcome(
@@ -94,17 +109,17 @@ public final class ResultMapper {
         return TransactionResult.builder()
             .status(status)
             .action(r.get("REQUEST_ACTION"))
-            .orderRef(r.get("PO_ID") != null ? Refs.order(r.get("PO_ID")) : null)
-            .xtlOrderRef(r.get("XTL_ORDER_ID") != null ? Refs.xtlOrder(r.get("XTL_ORDER_ID")) : null)
-            .transactionId(r.get("TRANS_ID") != null ? Refs.transaction(r.get("TRANS_ID")) : null)
-            .requestId(r.get("REQ_ID") != null ? Refs.req(r.get("REQ_ID")) : null)
-            .batchId(r.get("BATCH_ID") != null ? Refs.batch(r.get("BATCH_ID")) : null)
-            .customerRef(r.get("CUST_ID") != null || r.get("XTL_CUST_ID") != null
-                ? Refs.customer(r.get("CUST_ID"), r.get("XTL_CUST_ID")) : null)
-            .savedCardRef(r.get("PMT_ID") != null || r.get("PMT_ID_XTL") != null
-                ? Refs.savedCard(r.get("PMT_ID"), r.get("PMT_ID_XTL")) : null)
-            .membershipRef(r.get("MBSHP_ID") != null || r.get("MBSHP_ID_XTL") != null
-                ? Refs.membership(r.get("MBSHP_ID"), r.get("MBSHP_ID_XTL")) : null)
+            .orderRef(val(r, "PO_ID") != null ? Refs.order(val(r, "PO_ID")) : null)
+            .xtlOrderRef(val(r, "XTL_ORDER_ID") != null ? Refs.xtlOrder(val(r, "XTL_ORDER_ID")) : null)
+            .transactionId(val(r, "TRANS_ID") != null ? Refs.transaction(val(r, "TRANS_ID")) : null)
+            .requestId(val(r, "REQ_ID") != null ? Refs.req(val(r, "REQ_ID")) : null)
+            .batchId(val(r, "BATCH_ID") != null ? Refs.batch(val(r, "BATCH_ID")) : null)
+            .customerRef(val(r, "CUST_ID") != null || val(r, "XTL_CUST_ID") != null
+                ? Refs.customer(val(r, "CUST_ID"), val(r, "XTL_CUST_ID")) : null)
+            .savedCardRef(val(r, "PMT_ID") != null || val(r, "PMT_ID_XTL") != null
+                ? Refs.savedCard(val(r, "PMT_ID"), val(r, "PMT_ID_XTL")) : null)
+            .membershipRef(val(r, "MBSHP_ID") != null || val(r, "MBSHP_ID_XTL") != null
+                ? Refs.membership(val(r, "MBSHP_ID"), val(r, "MBSHP_ID_XTL")) : null)
             .lineItemRefs(liRefs)
             .amount(amount)
             .settled(flag(r.get("TRANS_SETTLED")))
@@ -120,9 +135,9 @@ public final class ResultMapper {
     }
 
     private static TransactionResult.CardInfo card(Map<String, String> r) {
-        boolean has = r.get("CARD_BRAND_NAME") != null || r.get("PMT_L4") != null
-            || r.get("CARD_TYPE") != null || r.get("CARD_BANK") != null
-            || r.get("CARD_COUNTRY") != null;
+        boolean has = val(r, "CARD_BRAND_NAME") != null || val(r, "PMT_L4") != null
+            || val(r, "CARD_TYPE") != null || val(r, "CARD_BANK") != null
+            || val(r, "CARD_COUNTRY") != null;
         if (!has) return null;
         TransactionResult.CardInfo c = new TransactionResult.CardInfo();
         c.brand = r.get("CARD_BRAND_NAME");
@@ -135,7 +150,7 @@ public final class ResultMapper {
         c.balance = r.get("CARD_BALANCE");
         c.last4 = r.get("PMT_L4");
         c.networkTokenUsed = num(r.get("TRANS_NTOKEN_USED"));
-        if (r.get("PMT_AAU_UPDATE_DESC") != null || r.get("PMT_AAU_UPDATE_DATE") != null) {
+        if (val(r, "PMT_AAU_UPDATE_DESC") != null || val(r, "PMT_AAU_UPDATE_DATE") != null) {
             c.accountUpdater = new TransactionResult.AccountUpdater(
                 r.get("PMT_AAU_UPDATE_DESC"), r.get("PMT_AAU_UPDATE_DATE"),
                 r.get("PMT_AAU_UPDATE_EXPIRY"), r.get("PMT_AAU_UPDATE_L4"));
@@ -146,8 +161,8 @@ public final class ResultMapper {
     private static TransactionResult.NextAction nextAction(
         Map<String, String> r, TransactionStatus status) {
         if (status != TransactionStatus.PENDING) return null;
-        if (r.get("P3DS_PROCTRANSID") != null || r.get("PAREQ") != null
-            || r.get("P3DS_JWT") != null) {
+        if (val(r, "P3DS_PROCTRANSID") != null || val(r, "PAREQ") != null
+            || val(r, "P3DS_JWT") != null) {
             TransactionResult.NextAction n = new TransactionResult.NextAction("threeDSChallenge");
             n.redirectUrl = r.get("PROC_REDIRECT_URL");
             n.jwt = r.get("P3DS_JWT");
@@ -155,19 +170,19 @@ public final class ResultMapper {
             n.pareq = r.get("PAREQ");
             return n;
         }
-        if (r.get("PROC_BARCODE") != null) {
+        if (val(r, "PROC_BARCODE") != null) {
             TransactionResult.NextAction n = new TransactionResult.NextAction("displayVoucher");
             n.url = r.get("PROC_REDIRECT_URL");
             n.barcode = r.get("PROC_BARCODE");
             return n;
         }
-        if (r.get("PIX_TOKEN") != null) {
+        if (val(r, "PIX_TOKEN") != null) {
             TransactionResult.NextAction n = new TransactionResult.NextAction("displayQr");
             n.url = r.get("PROC_REDIRECT_URL");
             n.token = r.get("PIX_TOKEN");
             return n;
         }
-        if (r.get("PROC_REDIRECT_URL") != null) {
+        if (val(r, "PROC_REDIRECT_URL") != null) {
             TransactionResult.NextAction n = new TransactionResult.NextAction("redirect");
             n.url = r.get("PROC_REDIRECT_URL");
             return n;
@@ -182,7 +197,7 @@ public final class ResultMapper {
             if (l.amount() != null) { currency = l.amount().currency(); break; }
         }
         if (currency == null) {
-            currency = r.get("CURR_CODE_ALPHA") != null ? r.get("CURR_CODE_ALPHA") : "USD";
+            currency = val(r, "CURR_CODE_ALPHA") != null ? r.get("CURR_CODE_ALPHA") : "USD";
         }
 
         BigDecimal auth = BigDecimal.ZERO, cap = BigDecimal.ZERO, ref = BigDecimal.ZERO;
@@ -203,7 +218,7 @@ public final class ResultMapper {
 
         return new OrderStatus(
             Refs.order(r.getOrDefault("PO_ID", "unknown")),
-            r.get("XTL_ORDER_ID") != null ? Refs.xtlOrder(r.get("XTL_ORDER_ID")) : null,
+            val(r, "XTL_ORDER_ID") != null ? Refs.xtlOrder(val(r, "XTL_ORDER_ID")) : null,
             legs,
             Money.of(auth, currency),
             Money.of(cap, currency),
