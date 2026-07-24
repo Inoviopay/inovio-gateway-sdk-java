@@ -210,10 +210,33 @@ public final class InovioClient {
         return capture(order, null);
     }
 
-    /** CCCAPTURE against a single line item. */
-    public TransactionResult captureLineItem(Refs.LineItemRef item, Money amount) {
-        return ResultMapper.toTransactionResult(call(RequestAction.CCCAPTURE.wire(),
-            amountParams("REQUEST_REF_PO_LI_ID", item.poLiId(), amount), null));
+    /**
+     * CCCAPTURE against a single line item.
+     *
+     * <p>Per spec §5.5.6 the gateway requires the PARENT ORDER and an amount
+     * alongside the line-item id — sending {@code REQUEST_REF_PO_LI_ID} alone
+     * is rejected with API 113 "Invalid Data". {@code LineItemRef} does not
+     * carry its order, so both must be passed. Verified against live T1.
+     *
+     * @param order the order the line item belongs to (gateway-required)
+     * @param item the line item, from {@code result.lineItemRefs()}
+     * @param amount required — a line-item capture without LI_VALUE_1 is rejected
+     */
+    public TransactionResult captureLineItem(Refs.OrderRef order, Refs.LineItemRef item,
+                                             Money amount) {
+        if (amount == null) {
+            throw new ValidationException(
+                "captureLineItem requires an amount — the gateway rejects a line-item "
+                    + "capture without LI_VALUE_1 (spec §5.5.6)", "LI_VALUE_1");
+        }
+        Map<String, String> p = new LinkedHashMap<>();
+        p.put("REQUEST_REF_PO_ID", order.poId());
+        p.put("REQUEST_REF_PO_LI_ID", item.poLiId());
+        p.put("LI_VALUE_1", amount.toWire());
+        p.put("LI_COUNT_1", "1");
+        p.put("REQUEST_CURRENCY", amount.currency());
+        return ResultMapper.toTransactionResult(
+            call(RequestAction.CCCAPTURE.wire(), p, null));
     }
 
     /** CCREVERSE — void the original authorization. */
