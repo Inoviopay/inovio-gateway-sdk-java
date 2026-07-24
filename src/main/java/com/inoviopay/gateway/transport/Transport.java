@@ -78,6 +78,13 @@ public final class Transport {
         Map<String, String> out = new HashMap<>();
         String trimmed = body == null ? "" : body.trim();
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            // CCSTATUS answers with a COLUMNS/DATA table rather than flat
+            // fields. Flattening would destroy the row structure, so pass it
+            // through untouched for the client to expand.
+            if (trimmed.contains("\"COLUMNS\"") && trimmed.contains("\"DATA\"")) {
+                out.put("__TABULAR__", trimmed);
+                return out;
+            }
             parseFlatJson(trimmed, out);
             return out;
         }

@@ -329,31 +329,76 @@ public final class InovioClient {
     }
 
     /**
-     * CCSTATUS returns multiple transactions flattened with indexed keys; split
-     * them back into per-leg field maps.
+     * CCSTATUS does not answer with flat fields like every other action — it
+     * returns a tabular payload:
+     *
+     * <pre>
+     * { "COLUMNS": ["REQUEST_ACTION","TRANS_STATUS_NAME",...],
+     *   "DATA":    [ ["CCAUTHORIZE","APPROVED",...], ["CCCAPTURE",...] ] }
+     * </pre>
+     *
+     * <p>One DATA row per leg against the order. Verified against the live T1
+     * gateway; this shape is not described in the v4.14 response-fields section.
      */
     static List<Map<String, String>> extractLegs(Map<String, String> raw) {
-        Map<Integer, Map<String, String>> indexed = new TreeMap<>();
-        for (Map.Entry<String, String> e : raw.entrySet()) {
-            Matcher m = INDEXED.matcher(e.getKey());
-            if (!m.matches()) continue;
-            String base = m.group(1);
-            if (!LEG_FIELD.matcher(base).matches()) continue;
-            int idx = Integer.parseInt(m.group(2));
-            indexed.computeIfAbsent(idx, k -> new LinkedHashMap<>()).put(base, e.getValue());
+        String tabular = raw.get("__TABULAR__");
+        if (tabular == null) return new ArrayList<>();
+
+        List<String> columns = jsonStringArray(tabular, "COLUMNS");
+        List<List<String>> rows = jsonRowArray(tabular, "DATA");
+        List<Map<String, String>> legs = new ArrayList<>();
+        for (List<String> row : rows) {
+            Map<String, String> leg = new LinkedHashMap<>();
+            for (int i = 0; i < columns.size() && i < row.size(); i++) {
+                String v = row.get(i);
+                if (v == null || v.isEmpty()) continue;
+                // Duplicate column names appear (TRANS_ID twice); first wins.
+                leg.putIfAbsent(columns.get(i).toUpperCase(), v);
+            }
+            legs.add(leg);
         }
-        // Order-level fields apply to every leg — notably CURR_CODE_ALPHA,
-        // without which a leg has no currency and no amount can be built.
-        Map<String, String> inherited = new LinkedHashMap<>();
-        for (String k : new String[] {"PO_ID", "XTL_ORDER_ID", "CURR_CODE_ALPHA", "MERCH_ACCT_ID"}) {
-            if (raw.containsKey(k)) inherited.put(k, raw.get(k));
-        }
-        List<Map<String, String>> out = new ArrayList<>();
-        for (Map<String, String> leg : indexed.values()) {
-            Map<String, String> merged = new LinkedHashMap<>(inherited);
-            merged.putAll(leg);
-            out.add(merged);
+        return legs;
+    }
+
+    /** Read a flat ["a","b"] array out of the raw JSON by key. */
+    private static List<String> jsonStringArray(String json, String key) {
+        List<String> out = new ArrayList<>();
+        int k = json.indexOf('"' + key + '"');
+        if (k < 0) return out;
+        int start = json.indexOf('[', k);
+        int end = json.indexOf(']', start);
+        if (start < 0 || end < 0) return out;
+        for (String part : json.substring(start + 1, end).split(",")) {
+            out.add(part.trim().replaceAll("^\"|\"$", ""));
         }
         return out;
+    }
+
+    /** Read a [[...],[...]] array of rows out of the raw JSON by key. */
+    private static List<List<String>> jsonRowArray(String json, String key) {
+        List<List<String>> rows = new ArrayList<>();
+        int k = json.indexOf('"' + key + '"');
+        if (k < 0) return rows;
+        int i = json.indexOf('[', k) + 1;
+        while (i < json.length()) {
+            int rowStart = json.indexOf('[', i);
+            if (rowStart < 0) break;
+            int rowEnd = json.indexOf(']', rowStart);
+            if (rowEnd < 0) break;
+            List<String> row = new ArrayList<>();
+            StringBuilder cur = new StringBuilder();
+            boolean inStr = false;
+            for (int j = rowStart + 1; j < rowEnd; j++) {
+                char c = json.charAt(j);
+                if (c == '"') { inStr = !inStr; continue; }
+                if (c == ',' && !inStr) { row.add(cur.toString().trim()); cur.setLength(0); continue; }
+                cur.append(c);
+            }
+            row.add(cur.toString().trim());
+            rows.add(row);
+            i = rowEnd + 1;
+            if (json.indexOf('[', i) < 0 || json.indexOf(']', i) < json.indexOf('[', i)) break;
+        }
+        return rows;
     }
 }

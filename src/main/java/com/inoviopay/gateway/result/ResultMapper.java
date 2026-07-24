@@ -4,6 +4,7 @@ import com.inoviopay.gateway.enums.AvsCodes;
 import com.inoviopay.gateway.enums.CvvCodes;
 import com.inoviopay.gateway.enums.ServiceResponseCodes;
 import com.inoviopay.gateway.enums.TransactionStatus;
+import com.inoviopay.gateway.errors.TransportException;
 import com.inoviopay.gateway.model.Money;
 import com.inoviopay.gateway.refs.Refs;
 
@@ -200,30 +201,78 @@ public final class ResultMapper {
             currency = val(r, "CURR_CODE_ALPHA") != null ? r.get("CURR_CODE_ALPHA") : "USD";
         }
 
-        BigDecimal auth = BigDecimal.ZERO, cap = BigDecimal.ZERO, ref = BigDecimal.ZERO;
+        // Four distinct leg kinds — conflating void with refund gets the
+        // maths wrong.
+        //
+        //   CCAUTHORIZE / CCAUTHCAP  : establishes the authorized amount
+        //   CCCAPTURE                : draws down against the authorization
+        //   CCCREDIT                 : refunds a capture (money returned)
+        //   CCREVERSE / CCREVERSECAP : VOIDS — cancels an authorization or a
+        //                              capture. A void is not a refund: it
+        //                              releases the hold, so it reduces
+        //                              `authorized` rather than inflating
+        //                              `refunded`. Verified on the live T1
+        //                              gateway, where a voided auth nets to 0
+        //                              with nothing outstanding.
+        //
+        // Credit and void legs arrive with a NEGATIVE TRANS_VALUE, so their
+        // magnitudes are taken before aggregating.
+        BigDecimal authGross = BigDecimal.ZERO;
+        BigDecimal cap = BigDecimal.ZERO;
+        BigDecimal voided = BigDecimal.ZERO;
+        BigDecimal refundedAmt = BigDecimal.ZERO;
         boolean settled = !legs.isEmpty();
         for (TransactionResult l : legs) {
             String a = l.action() == null ? "" : l.action().toUpperCase();
             boolean isAuth = a.contains("AUTHORIZE") || a.contains("AUTHCAP");
-            boolean isCapture = a.contains("CAPTURE") && !a.contains("REVERSECAP");
-            boolean isRefund = a.contains("CREDIT") || a.contains("REVERSE");
+            // CCAUTHCAP authorizes AND captures in one leg, so it counts as
+            // both — otherwise sale() reports captured=0 with the full amount
+            // outstanding. Verified on the live T1 gateway.
+            boolean isCapture = (a.contains("CAPTURE") || a.contains("AUTHCAP"))
+                && !a.contains("REVERSECAP");
+            boolean isVoid = a.contains("REVERSE");
+            boolean isRefund = a.contains("CREDIT");
             boolean approved = l.status() == TransactionStatus.APPROVED;
             if (l.amount() != null && approved) {
-                if (isAuth) auth = auth.add(l.amount().amount());
-                else if (isCapture) cap = cap.add(l.amount().amount());
-                else if (isRefund) ref = ref.add(l.amount().amount());
+                BigDecimal v = l.amount().amount();
+                // NOT exclusive: CCAUTHCAP is both an auth and a capture, so
+                // it must land in both buckets. An if/else-if chain would
+                // credit only the first match and report captured=0 on sale().
+                if (isAuth) authGross = authGross.add(v);
+                if (isCapture) cap = cap.add(v);
+                if (isVoid) voided = voided.add(v.abs());
+                if (isRefund) refundedAmt = refundedAmt.add(v.abs());
             }
             if (isAuth && !l.settled()) settled = false;
         }
+        BigDecimal auth = authGross.subtract(voided);
+
+        // The tabular CCSTATUS payload carries no top-level PO_ID — it lives on
+        // each leg. Fall back to the legs so the aggregate is keyed correctly.
+        String poId = r.get("PO_ID");
+        if (poId == null || poId.isEmpty()) {
+            for (TransactionResult l : legs) {
+                if (l.orderRef() != null) { poId = l.orderRef().poId(); break; }
+            }
+        }
+        if (poId == null || poId.isEmpty()) {
+            throw new TransportException("CCSTATUS response carried no PO_ID on any leg");
+        }
+        String xtl = r.get("XTL_ORDER_ID");
+        if (xtl == null || xtl.isEmpty()) {
+            for (TransactionResult l : legs) {
+                if (l.xtlOrderRef() != null) { xtl = l.xtlOrderRef().value(); break; }
+            }
+        }
 
         return new OrderStatus(
-            Refs.order(r.getOrDefault("PO_ID", "unknown")),
-            val(r, "XTL_ORDER_ID") != null ? Refs.xtlOrder(val(r, "XTL_ORDER_ID")) : null,
+            Refs.order(poId),
+            (xtl == null || xtl.isEmpty()) ? null : Refs.xtlOrder(xtl),
             legs,
             Money.of(auth, currency),
             Money.of(cap, currency),
-            Money.of(ref, currency),
-            Money.of(cap.subtract(ref), currency),
+            Money.of(refundedAmt, currency),
+            Money.of(cap.subtract(refundedAmt), currency),
             Money.of(auth.subtract(cap), currency),
             settled,
             r);

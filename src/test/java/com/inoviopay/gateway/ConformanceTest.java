@@ -45,7 +45,16 @@ class ConformanceTest {
         private final boolean timeout;
         Map<String, String> lastParams = new LinkedHashMap<>();
 
+        /** Raw body override, for CCSTATUS COLUMNS/DATA fixtures. */
+        String rawBody;
+
         MockHttp(Map<String, String> response) { this(response, false); }
+
+        static MockHttp raw(String body) {
+            MockHttp m = new MockHttp(new LinkedHashMap<>());
+            m.rawBody = body;
+            return m;
+        }
 
         MockHttp(Map<String, String> response, boolean timeout) {
             this.response = response;
@@ -56,6 +65,7 @@ class ConformanceTest {
         public Response post(String url, String body, Map<String, String> headers, long timeoutMs) {
             lastParams = Transport.normalizeResponse(body);
             if (timeout) throw new TimeoutSignal("simulated", null);
+            if (rawBody != null) return new Response(200, rawBody);
             StringBuilder sb = new StringBuilder("{");
             boolean first = true;
             for (Map.Entry<String, String> e : response.entrySet()) {
@@ -339,24 +349,58 @@ class ConformanceTest {
 
     @Test
     void status_netPositionMultiLeg() {
+        // CCSTATUS answers with a COLUMNS/DATA table (one row per leg), NOT
+        // flat indexed fields — verified against the live T1 gateway. Credit
+        // and void legs arrive with a NEGATIVE TRANS_VALUE.
         // auth 100, capture 60, refund 10 -> net 50, outstanding 40
-        MockHttp http = new MockHttp(resp(
-            "PO_ID", "PO-2000", "CURR_CODE_ALPHA", "USD", "API_RESPONSE", "0",
-            "REQUEST_ACTION_1", "CCAUTHORIZE", "TRANS_STATUS_NAME_1", "APPROVED",
-            "TRANS_VALUE_1", "100.00", "TRANS_ID_1", "T-1",
-            "REQUEST_ACTION_2", "CCCAPTURE", "TRANS_STATUS_NAME_2", "APPROVED",
-            "TRANS_VALUE_2", "60.00", "TRANS_ID_2", "T-2",
-            "REQUEST_ACTION_3", "CCCREDIT", "TRANS_STATUS_NAME_3", "APPROVED",
-            "TRANS_VALUE_3", "10.00", "TRANS_ID_3", "T-3"));
+        MockHttp http = MockHttp.raw(
+            "{\"COLUMNS\":[\"REQUEST_ACTION\",\"TRANS_STATUS_NAME\",\"TRANS_VALUE\","
+            + "\"TRANS_ID\",\"PO_ID\",\"XTL_ORDER_ID\",\"CURR_CODE_ALPHA\"],"
+            + "\"DATA\":[[\"CCAUTHORIZE\",\"APPROVED\",100.00,\"T-1\",\"PO-2000\",\"ORD-2000\",\"USD\"],"
+            + "[\"CCCAPTURE\",\"APPROVED\",60.00,\"T-2\",\"PO-2000\",\"\",\"USD\"],"
+            + "[\"CCCREDIT\",\"APPROVED\",-10.00,\"T-3\",\"PO-2000\",\"\",\"USD\"]]}");
 
         OrderStatus s = client(http).status(Refs.order("PO-2000"));
 
         assertEquals(3, s.transactions().size());
-        assertEquals("100.00", s.authorized().toWire());
-        assertEquals("60.00", s.captured().toWire());
-        assertEquals("10.00", s.refunded().toWire());
-        assertEquals("50.00", s.net().toWire());
-        assertEquals("40.00", s.outstanding().toWire());
+        assertEquals(0, new java.math.BigDecimal("100").compareTo(s.authorized().amount()));
+        assertEquals(0, new java.math.BigDecimal("60").compareTo(s.captured().amount()));
+        assertEquals(0, new java.math.BigDecimal("10").compareTo(s.refunded().amount()));
+        assertEquals(0, new java.math.BigDecimal("50").compareTo(s.net().amount()));
+        assertEquals(0, new java.math.BigDecimal("40").compareTo(s.outstanding().amount()));
+    }
+
+    @Test
+    void status_voidedAuthNetsToZero() {
+        // A CCREVERSE is a VOID, not a refund: it releases the authorization
+        // rather than returning captured funds, so it reduces `authorized`.
+        MockHttp http = MockHttp.raw(
+            "{\"COLUMNS\":[\"REQUEST_ACTION\",\"TRANS_STATUS_NAME\",\"TRANS_VALUE\","
+            + "\"TRANS_ID\",\"PO_ID\",\"CURR_CODE_ALPHA\"],"
+            + "\"DATA\":[[\"CCAUTHORIZE\",\"APPROVED\",2.00,\"T-10\",\"PO-3000\",\"USD\"],"
+            + "[\"CCREVERSE\",\"APPROVED\",-2.00,\"T-11\",\"PO-3000\",\"USD\"]]}");
+
+        OrderStatus s = client(http).status(Refs.order("PO-3000"));
+
+        assertEquals(0, java.math.BigDecimal.ZERO.compareTo(s.authorized().amount()));
+        assertEquals(0, java.math.BigDecimal.ZERO.compareTo(s.net().amount()));
+        assertEquals(0, java.math.BigDecimal.ZERO.compareTo(s.outstanding().amount()));
+    }
+
+    @Test
+    void status_saleCountsAsAuthorizedAndCaptured() {
+        // CCAUTHCAP authorizes AND captures in one leg — it must count as both.
+        MockHttp http = MockHttp.raw(
+            "{\"COLUMNS\":[\"REQUEST_ACTION\",\"TRANS_STATUS_NAME\",\"TRANS_VALUE\","
+            + "\"TRANS_ID\",\"PO_ID\",\"CURR_CODE_ALPHA\"],"
+            + "\"DATA\":[[\"CCAUTHCAP\",\"APPROVED\",1.00,\"T-20\",\"PO-4000\",\"USD\"]]}");
+
+        OrderStatus s = client(http).status(Refs.order("PO-4000"));
+
+        assertEquals(0, new java.math.BigDecimal("1").compareTo(s.authorized().amount()));
+        assertEquals(0, new java.math.BigDecimal("1").compareTo(s.captured().amount()));
+        assertEquals(0, new java.math.BigDecimal("1").compareTo(s.net().amount()));
+        assertEquals(0, java.math.BigDecimal.ZERO.compareTo(s.outstanding().amount()));
     }
 
     // ------------------------------------------------------------------- misc
